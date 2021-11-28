@@ -2,10 +2,12 @@ import requests
 from bs4 import BeautifulSoup
 import boto3
 import json
+import os
 from decimal import Decimal
 from datetime import date, timedelta
 
-import sys
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('lego-stats')
 
 def extractSetNumberFromTitle(title):
     return [int(i) for i in title.split() if i.isdigit()]
@@ -24,8 +26,6 @@ def getInformation(url, headers=None):
     return code, title, price
 
 def checkIfItemInDynamoDB():
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('lego-stats')
     response = table.get_item(
         Key = {
             'Date': str(date.today())
@@ -38,8 +38,6 @@ def checkIfItemInDynamoDB():
 
 def saveToDynamoDB(code, title, price):
     print("Saving data...")
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('lego-stats')
     table.put_item(
         Item={
             'Date': str(date.today()),
@@ -50,8 +48,6 @@ def saveToDynamoDB(code, title, price):
     )
 
 def updateExistingField(price):
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('lego-stats')
     response = table.get_item(
         Key={
             'Date': str(date.today())
@@ -67,8 +63,7 @@ def publish_text_message(phone_number, message):
         PhoneNumber=phone_number, Message=message)
 
 def yesterdayPrice():
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table('lego-stats')
+
     yesterdayDate = date.today() - timedelta(days=1)
     response = table.get_item(
         Key={
@@ -78,11 +73,9 @@ def yesterdayPrice():
     item = response['Item']
     return item['Price']
 
-if __name__ == "__main__":
-    if sys.argv[1] is None:
-        url = 'https://www.mediaexpert.pl/zabawki/lego/lego/lego-ideas-miedzynarodowa-stacja-kosmiczna-21321'
-    else:
-        url = sys.argv[1]
+def lambda_handler(event, context):
+    url = os.getenv("URL")
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 Safari/537.36"
     }
@@ -94,8 +87,12 @@ if __name__ == "__main__":
         saveToDynamoDB(code, title, price)
 
     priceOnYesterday = yesterdayPrice()
-    print(priceOnYesterday)
-    if float(price) <= priceOnYesterday * Decimal(0.85):
-        messageText = "Zestaw lego {} jest dzis tanszy o {} zl.".format(title, priceOnYesterday-Decimal(price))
-        publish_text_message("+123456789", messageText)
 
+    if Decimal(price) <= Decimal(priceOnYesterday) * Decimal(0.90):
+        messageText = "Zestaw lego {} jest dzis tanszy o {} zl.".format(title, Decimal(priceOnYesterday)-Decimal(price))
+        publish_text_message("+48123456789", messageText)
+
+    return {
+        'statusCode': 200,
+        'body': "Successful writing"
+    }
